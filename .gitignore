@@ -1,0 +1,2 @@
+# Ignore samconfig.toml config file created after bootstrapping an environment
+samconfig.toml
