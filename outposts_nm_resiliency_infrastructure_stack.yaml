@@ -1,0 +1,366 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: SAM Template for N+M Resiliency Monitoring on AWS Outposts
+
+Parameters:
+  OutpostIds:
+    Type: CommaDelimitedList
+    Description: >
+      Comma-separated list of Outpost IDs to monitor. 
+      Each Outpost ID must start with 'op-' followed by 17 hexadecimal characters. 
+      Example: op-12345678901234567,op-abcdef0123456789a
+    AllowedPattern: '^(op-[a-f0-9]{17})(,op-[a-f0-9]{17})*$'
+    ConstraintDescription: >
+      Each Outpost ID must be in the format 'op-' followed by 17 hexadecimal characters (0-9, a-f). 
+      Multiple IDs should be separated by commas without spaces.
+  M:
+    Type: Number
+    Default: 1
+    Description: 'Number of hosts that can fail and still allow the remaining hosts to carry the running instances'
+    AllowedValues: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+    ConstraintDescription: 'M must be a non-negative integer between 0 and 10'
+  ScheduleCron:
+    Type: String
+    Default: 'cron(0 0 * * ? *)'
+    Description: >
+      Schedule expression for running the Monitoring Stack Manager Lambda. 
+      Supports two types of recurring schedules:
+
+      1. Rate expression: rate(value unit)
+         - value: positive integer
+         - unit: minute | minutes | hour | hours | day | days
+         Example: 'rate(1 day)'
+
+      2. Cron expression: cron(minutes hours day_of_month month day_of_week year)
+         Standard cron format. For more information, see AWS EventBridge Scheduler User Guide.
+    AllowedPattern: '^(cron\([^\s]+\s[^\s]+\s[^\s]+\s[^\s]+\s[^\s]+\s[^\s]+\)|rate\(\d+\s(minute|minutes|hour|hours|day|days)\))$'
+    ConstraintDescription: >
+      Must be either a valid cron expression cron(* * * * ? *) or 
+      rate expression rate(value unit) where unit is minute(s), hour(s), or day(s).
+    MinLength: 1
+    MaxLength: 256
+  EmailAddresses:
+    Type: CommaDelimitedList
+    Description: >
+      Comma-separated list of email addresses to receive notifications. 
+      At least one email address is required. 
+      Example: alice@example.com,bob@example.com
+    AllowedPattern: '^[a-zA-Z0-9](?:[a-zA-Z0-9._%+-]*[a-zA-Z0-9])?@[a-zA-Z0-9](?:[a-zA-Z0-9.-]*[a-zA-Z0-9])?\.[a-zA-Z]{2,}$'
+    ConstraintDescription: >
+      Each email address must be in a valid format:
+      - Must start and end with alphanumeric character
+      - Can contain . _ % + - characters
+      - Multiple addresses should be separated by commas without spaces
+  InstanceFamilyResiliencyMap:
+    Type: String
+    Description: >
+      Map of EC2 instance families to their desired resiliency levels. 
+      Example: {"m5": 2, "c5": 1, "g4dn": 0}. 
+      Instance families specified here will overwrite the M value while instance 
+      families missing will inherit the value of M. Values must be non-negative integers.
+    Default: '{}'
+    AllowedPattern: '\{(?:\s*"[a-z]+[0-9]+(?:[a-z]+)?"\s*:\s*(?:[0-9]|10)\s*,?\s*)*\}'
+    ConstraintDescription: >
+      Must be a map with instance family keys and integer values.
+      Example: {"m5": 2, "c5": 1, "g4dn": 0}
+    MaxLength: 256
+
+Resources:
+  SharedLibraryLayer:
+    Type: AWS::Lambda::LayerVersion
+    Properties:
+      LayerName: !Sub '${AWS::StackName}-shared-lib'
+      Description: Shared library for N+M resiliency monitoring
+      CompatibleRuntimes:
+        - python3.13
+      Content: lambda-layer/shared-lib
+  
+  MonitoringStackNested:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: lambda-layer/shared-lib/python/shared/cfn-templates/monitoring_stack.json
+
+  MonitoringStackManagerLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/${AWS::StackName}-MonitoringStackManager'
+      RetentionInDays: 7
+
+  ProcessAlarmLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/${AWS::StackName}-ProcessAlarm'
+      RetentionInDays: 7
+
+  MonitoringStackManagerLambda:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub '${AWS::StackName}-MonitoringStackManager'
+      CodeUri: lambda-src/monitoring_stack_manager
+      Handler: lambda_function.lambda_handler
+      Runtime: python3.13
+      Layers:
+        - !Ref SharedLibraryLayer
+      Timeout: 900  # 15 minutes
+      MemorySize: 512
+      Environment:
+        Variables:
+          OUTPOST_IDS: !Join [',', !Ref OutpostIds]
+          DEFAULT_M: !Ref M
+          INSTANCE_FAMILY_RESILIENCY_MAP: !Ref InstanceFamilyResiliencyMap
+          SNS_TOPIC_ARN: !Ref NotificationTopic
+          MONITORING_STACK_ARN: !Ref MonitoringStackNested
+          MONITORING_STACK_TEMPLATE_PATH: cfn-templates/monitoring_stack.json
+      Policies:
+        - Version: '2012-10-17'
+          Statement:
+            # Outposts permissions
+            - Effect: Allow
+              Action:
+                - outposts:GetOutpost
+                - outposts:ListAssets
+                - outposts:ListCapacityTasks
+                - outposts:ListAssetInstances
+                - outposts:GetOutpostInstanceTypes
+              Resource: !Sub 'arn:aws:outposts:${AWS::Region}:${AWS::AccountId}:*'
+            
+            # CloudWatch permissions
+            - Effect: Allow
+              Action:
+                - cloudwatch:PutMetricAlarm
+                - cloudwatch:DeleteAlarms
+                - cloudwatch:DescribeAlarms
+              Resource: !Sub 'arn:aws:cloudwatch:${AWS::Region}:${AWS::AccountId}:alarm:OutpostResiliency-*'
+            
+            # CloudFormation permissions
+            - Effect: Allow
+              Action:
+                - cloudformation:UpdateStack
+                - cloudformation:DescribeStacks
+              Resource: !Ref MonitoringStackNested
+            
+            # SNS permissions
+            - Effect: Allow
+              Action:
+                - sns:Publish
+              Resource: !Ref NotificationTopic
+
+  MonitoringStackManagerPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref MonitoringStackManagerLambda
+      Action: "lambda:InvokeFunction"
+      Principal: "scheduler.amazonaws.com"
+      SourceArn: !GetAtt MonitoringStackSchedule.Arn
+      SourceAccount: !Ref AWS::AccountId
+  
+  ProcessAlarmLambda:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub '${AWS::StackName}-ProcessAlarm'
+      CodeUri: lambda-src/process_alarm
+      Handler: lambda_function.lambda_handler
+      Runtime: python3.13
+      Layers:
+        - !Ref SharedLibraryLayer
+      Timeout: 300  # 5 minutes
+      MemorySize: 256
+      Environment:
+        Variables:
+          SNS_TOPIC_ARN: !Ref NotificationTopic
+      Policies:
+        - Version: '2012-10-17'
+          Statement:
+            # Outposts permissions
+            - Effect: Allow
+              Action:
+                - outposts:GetOutpost
+                - outposts:ListAssets
+                - outposts:ListCapacityTasks
+                - outposts:ListAssetInstances
+                - outposts:GetOutpostInstanceTypes
+              Resource: !Sub 'arn:aws:outposts:${AWS::Region}:${AWS::AccountId}:*'
+            
+            # CloudWatch permissions
+            - Effect: Allow
+              Action:
+                - cloudwatch:DescribeAlarms
+                - cloudwatch:DescribeAlarmHistory
+              Resource: !Sub 'arn:aws:cloudwatch:${AWS::Region}:${AWS::AccountId}:alarm:*'
+            
+            # SNS permissions
+            - Effect: Allow
+              Action:
+                - sns:Publish
+              Resource: !Ref NotificationTopic
+
+  ProcessAlarmPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref ProcessAlarmLambda
+      Action: "lambda:InvokeFunction"
+      Principal: "events.amazonaws.com"
+      SourceArn: !Sub "arn:aws:cloudwatch:${AWS::Region}:${AWS::AccountId}:alarm:OutpostResiliency*"
+      SourceAccount: !Ref AWS::AccountId
+
+  ProcessAlarmPermissionCloudWatch:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref ProcessAlarmLambda
+      Action: "lambda:InvokeFunction"
+      Principal: "lambda.alarms.cloudwatch.amazonaws.com"
+      SourceArn: !Sub "arn:aws:cloudwatch:${AWS::Region}:${AWS::AccountId}:alarm:OutpostResiliency*"
+      SourceAccount: !Ref AWS::AccountId
+
+  MonitoringStackSchedule:
+    Type: AWS::Scheduler::Schedule
+    Properties:
+      Name: !Sub '${AWS::StackName}-MonitoringStackSchedule'
+      Description: 'Schedule for running the Monitoring Stack Manager Lambda'
+      FlexibleTimeWindow:
+        Mode: 'OFF'
+      ScheduleExpression: !Ref ScheduleCron
+      Target:
+        Arn: !GetAtt MonitoringStackManagerLambda.Arn
+        RoleArn: !GetAtt SchedulerExecutionRole.Arn
+        Input: 
+          Fn::Sub:
+            - |
+              {
+                "OutpostIds": ["${OutpostIdsList}"],
+                "M": ${M},
+                "InstanceFamilyResiliencyMap": ${InstanceFamilyResiliencyMap},
+                "SNSTopicArn": "${NotificationTopic}",
+                "ProcessAlarmLambdaArn": "${ProcessAlarmLambda.Arn}"
+              }
+            - OutpostIdsList: !Join ['","', !Ref OutpostIds]
+              ProcessAlarmLambda: !Ref ProcessAlarmLambda
+              InstanceFamilyResiliencyMap: !Ref InstanceFamilyResiliencyMap
+
+  SchedulerExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: scheduler.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: InvokeLambdaPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: lambda:InvokeFunction
+                Resource: !GetAtt MonitoringStackManagerLambda.Arn
+
+  SNSEncryptionKey:
+    Type: AWS::KMS::Key
+    Properties:
+      Description: 'KMS key for SNS topic encryption'
+      EnableKeyRotation: true
+      KeyPolicy:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: 'Allow CloudFormation to manage the key'
+            Effect: Allow
+            Principal:
+              Service: 'cloudformation.amazonaws.com'
+            Action:
+              - 'kms:Create*'
+              - 'kms:Describe*'
+              - 'kms:Enable*'
+              - 'kms:List*'
+              - 'kms:Put*'
+              - 'kms:Update*'
+              - 'kms:Revoke*'
+              - 'kms:Disable*'
+              - 'kms:Get*'
+              - 'kms:Delete*'
+              - 'kms:ScheduleKeyDeletion'
+              - 'kms:CancelKeyDeletion'
+            Resource: '*'
+            Condition:
+              StringEquals:
+                'aws:SourceAccount': !Ref 'AWS::AccountId'
+
+          - Sid: 'Allow SNS service to use the key'
+            Effect: Allow
+            Principal:
+              Service: 'sns.amazonaws.com'
+            Action:
+              - 'kms:Decrypt'
+              - 'kms:GenerateDataKey*'
+            Resource: '*'
+            Condition:
+              StringEquals:
+                'aws:SourceAccount': !Ref 'AWS::AccountId'
+
+          - Sid: 'Allow Lambda functions to use the key'
+            Effect: Allow
+            Principal:
+              AWS: 
+                - !GetAtt MonitoringStackManagerLambdaRole.Arn
+                - !GetAtt ProcessAlarmLambdaRole.Arn
+            Action:
+              - 'kms:Decrypt'
+            Resource: '*'
+            Condition:
+              StringEquals:
+                'aws:SourceAccount': !Ref 'AWS::AccountId'
+
+          - Sid: 'Allow key administration'
+            Effect: Allow
+            Principal:
+              AWS: !Sub 'arn:aws:iam::${AWS::AccountId}:root'
+            Action:
+              - 'kms:*'
+            Resource: '*'
+
+  SNSEncryptionKeyAlias:
+    Type: AWS::KMS::Alias
+    Properties:
+      AliasName: !Sub 'alias/${AWS::StackName}-sns-encryption-key'
+      TargetKeyId: !Ref SNSEncryptionKey
+
+  NotificationTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: !Sub '${AWS::StackName}-Notifications'
+      KmsMasterKeyId: 'alias/aws/sns'
+
+  EmailSubscription:
+    Type: AWS::SNS::Subscription
+    Properties:
+      TopicArn: !Ref NotificationTopic
+      Protocol: email
+      Endpoint: !Join [',', !Ref EmailAddresses]
+
+  NotificationTopicPolicy:
+    Type: AWS::SNS::TopicPolicy
+    Properties:
+      Topics:
+        - !Ref NotificationTopic
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: 
+                - lambda.amazonaws.com
+                - cloudwatch.amazonaws.com
+            Action: 'sns:Publish'
+            Resource: !Ref NotificationTopic
+
+Outputs:
+  MonitoringStackManagerLambdaArn:
+    Description: 'ARN of the Monitoring Stack Manager Lambda'
+    Value: !GetAtt MonitoringStackManagerLambda.Arn
+  NotificationTopicArn:
+    Description: 'ARN of the SNS Notification Topic'
+    Value: !Ref NotificationTopic

@@ -1,0 +1,16 @@
+{
+  "AWSTemplateFormatVersion": "2010-09-09",
+  "Description": "N+M Resiliency Monitoring - CloudWatch Alarms for Outpost capacity monitoring. This stack is initialized empty and updated on schedule by Lambda based on N+M resiliency analysis.",
+  "Resources": {
+    "Placeholder": {
+      "Type": "AWS::CloudFormation::WaitConditionHandle",
+      "Properties": {}
+    }
+  },
+  "Outputs": {
+    "StackId": {
+      "Description": "The ID of this stack",
+      "Value": {"Ref": "AWS::StackId"}
+    }
+  }
+}
