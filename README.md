@@ -61,13 +61,17 @@ Before deploying the solution, gather the following information:
 
 ### Quick Start
 
-1. Clone the repository:
+1. Open AWS CloudShell in the region where your Outpost resides
+
+  *Note: while CloudShell is recommended, you may use any environment of your choice as long as the prerequisites are satisfied*
+
+2. Clone the repository:
    ```bash
-   git clone https://github.com/aws-samples/outposts-nm-resiliency
-   cd outposts-nm-resiliency
+   git clone https://github.com/aws-samples/sample-outposts-nm-resiliency
+   cd sample-outposts-nm-resiliency
    ```
 
-2. Deploy the solution:
+3. Deploy the solution:
    ```bash
    ./bootstrap.sh
    ```
