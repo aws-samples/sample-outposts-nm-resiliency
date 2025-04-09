@@ -116,12 +116,16 @@ To modify the configuration:
 ./bootstrap.sh configure
 ```
 
+  *Note: The stack name is read from your samconfig.toml file. If this file is missing and you previously deployed the stack, you will be prompted to provide the existing stack name. You can find the stack name in the AWS CloudFormation*
+
 ### Cleanup
 
 To remove all resources:
 ```bash
 ./bootstrap.sh cleanup
 ```
+
+  *Note: The stack name is read from your samconfig.toml file. If this file is missing and you previously deployed the stack, you will be prompted to provide the existing stack name. You can find the stack name in the AWS CloudFormation*
 
 ## Operation
 
