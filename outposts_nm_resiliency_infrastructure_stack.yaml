@@ -105,6 +105,7 @@ Resources:
       Layers:
         - !Ref SharedLibraryLayer
       Timeout: 900  # 15 minutes
+      ReservedConcurrentExecutions: 1  # Limiting concurrent executions
       MemorySize: 512
       Environment:
         Variables:
@@ -167,6 +168,7 @@ Resources:
       Layers:
         - !Ref SharedLibraryLayer
       Timeout: 300  # 5 minutes
+      ReservedConcurrentExecutions: 20  # Limiting concurrent executions
       MemorySize: 256
       Environment:
         Variables:
@@ -258,6 +260,44 @@ Resources:
               - Effect: Allow
                 Action: lambda:InvokeFunction
                 Resource: !GetAtt MonitoringStackManagerLambda.Arn
+
+  MonitoringStackManagerErrorAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub "${AWS::StackName}-MonitoringStackManager-Errors"
+      AlarmDescription: "Alarm for errors in the Monitoring Stack Manager Lambda"
+      MetricName: Errors
+      Namespace: AWS/Lambda
+      Statistic: Sum
+      Period: 60
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      Dimensions:
+        - Name: FunctionName
+          Value: !Ref MonitoringStackManagerLambda
+      AlarmActions:
+        - !Ref NotificationTopic
+
+  ProcessAlarmErrorAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub "${AWS::StackName}-ProcessAlarm-Errors"
+      AlarmDescription: "Alarm for errors in the Process Alarm Lambda"
+      MetricName: Errors
+      Namespace: AWS/Lambda
+      Statistic: Sum
+      Period: 60
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      Dimensions:
+        - Name: FunctionName
+          Value: !Ref ProcessAlarmLambda
+      AlarmActions:
+        - !Ref NotificationTopic
 
   SNSEncryptionKey:
     Type: AWS::KMS::Key

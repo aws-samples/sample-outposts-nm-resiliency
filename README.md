@@ -1,14 +1,14 @@
-# AWS Outposts N+M Resiliency Monitoring Solution
+# AWS Outposts N+M Resiliency Monitoring
 
-This solution helps customers monitor and maintain N+M resiliency on AWS Outposts Racks by automatically detecting and alerting on capacity risks associated with single or multiple host failures. It enables proactive capacity management by identifying scenarios where running workloads cannot be redistributed to healthy hosts during host failures, whether due to issues, unplanned downtime, or scheduled maintenance.
+This sample helps customers monitor and maintain N+M resiliency on AWS Outposts Racks by automatically detecting and alerting on capacity risks associated with single or multiple host failures. It enables proactive capacity management by identifying scenarios where running workloads cannot be redistributed to healthy hosts during host failures, whether due to issues, unplanned downtime, or scheduled maintenance.
 
 ## Architecture Diagram
 
-![Architecture Diagram of Dynamic Monitoring Solution](static/Dynamic_Capacity_Monitoring.jpg "Dynamic Monitoring of N+M Availability")
+![Architecture Diagram of Dynamic Monitoring](static/Dynamic_Capacity_Monitoring.jpg "Dynamic Monitoring of N+M Availability")
 
-## Solution Overview
+## Overview
 
-The solution monitors AWS Outposts Racks capacity and provides notifications when the N+M resiliency level is at risk. It consists of:
+This sample monitors AWS Outposts Racks capacity and provides notifications when the N+M resiliency level is at risk. It consists of:
 
 1. A monitoring framework that continuously evaluates the Outpost's capacity
 2. Automated alerts when resiliency risks are detected
@@ -17,7 +17,7 @@ The solution monitors AWS Outposts Racks capacity and provides notifications whe
 
 ## Configuration Parameters
 
-Before deploying the solution, gather the following information:
+Before deploying the sample, gather the following information:
 
 - **OutpostIds** (Required)
   - List of Outpost IDs to monitor
@@ -71,7 +71,7 @@ Before deploying the solution, gather the following information:
    cd sample-outposts-nm-resiliency
    ```
 
-3. Deploy the solution:
+3. Deploy the sample:
    ```bash
    ./bootstrap.sh
    ```
@@ -129,7 +129,7 @@ To remove all resources:
 
 ## Operation
 
-The solution operates through two main components:
+The sample operates through two main components:
 
 1. **Monitoring Stack Manager**
    - Creates and updates CloudWatch alarms based on current configuration
